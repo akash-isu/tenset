@@ -7,7 +7,7 @@ import glob
 import multiprocessing
 import os
 import pickle
-
+import ctypes #add import if liggcc_s.so.1 is not found by default
 from tqdm import tqdm
 
 import tvm
@@ -17,7 +17,7 @@ from tvm import auto_scheduler
 from common import (convert_to_nhwc, dtype2torch, NETWORK_INFO_FOLDER,
     get_relay_ir_filename, get_task_info_filename)
 
-
+libgcc_s = ctypes.CDLL('libgcc_s.so.1') #load liggcc_s.so.1 is not found by default
 def get_network_with_key(network_key):
     name, args = network_key
 

@@ -166,12 +166,13 @@ class BuildResult(Object):
         The time cost of build.
     """
 
-    def __init__(self, filename, args, error_no, error_msg, time_cost):
+    def __init__(self, filename, args, error_no, error_msg, time_cost, py_code):
         filename = filename if filename else ""
         error_msg = error_msg if error_msg else ""
+        py_code = py_code if py_code else ""
 
         self.__init_handle_by_constructor__(
-            _ffi_api.BuildResult, filename, args, error_no, error_msg, time_cost
+            _ffi_api.BuildResult, filename, args, error_no, error_msg, time_cost, py_code
         )
 
 
@@ -193,11 +194,12 @@ class MeasureResult(Object):
         The time stamps of this measurement.
     """
 
-    def __init__(self, costs, error_no, error_msg, all_cost, timestamp):
+    def __init__(self, costs, error_no, error_msg, all_cost, timestamp, py_code):
         error_msg = error_msg if error_msg else ""
+        py_code = py_code if py_code else ""
 
         self.__init_handle_by_constructor__(
-            _ffi_api.MeasureResult, costs, error_no, error_msg, all_cost, timestamp
+            _ffi_api.MeasureResult, costs, error_no, error_msg, all_cost, timestamp, py_code
         )
 
 
@@ -666,7 +668,9 @@ def _timed_func(inp_serialized, build_func, verbose):
         else:
             print(".E", end="", flush=True)  # Build error
 
-    return filename, args, error_no, error_msg, time.time() - tic
+    py_code = task.compute_dag.print_python_code_from_state(inp.state)
+
+    return filename, args, error_no, error_msg, time.time() - tic, py_code
 
 
 def local_build_worker(args):
@@ -693,11 +697,11 @@ def local_build_worker(args):
     if isinstance(res, TimeoutError):
         if verbose >= 1:
             print(".T", end="", flush=True)  # Build timeout
-        res = None, [], MeasureErrorNo.BUILD_TIMEOUT, None, timeout
+        res = None, [], MeasureErrorNo.BUILD_TIMEOUT, None, timeout, None
     elif isinstance(res, Exception):
         if verbose >= 1:
             print(".E", end="", flush=True)  # Build error
-        res = None, [], MeasureErrorNo.COMPILE_HOST, str(res), timeout
+        res = None, [], MeasureErrorNo.COMPILE_HOST, str(res), timeout, None
 
     return res
 
@@ -940,7 +944,9 @@ def _timed_eval_func(
             print("*", end="", flush=True)
         else:
             print("*E", end="", flush=True)  # Run error
-    return costs, error_no, error_msg, toc - tic + build_res.time_cost, toc
+
+    py_code = inp.task.compute_dag.print_python_code_from_state(inp.state)
+    return costs, error_no, error_msg, toc - tic + build_res.time_cost, toc, py_code
 
 
 @tvm._ffi.register_func("auto_scheduler.local_runner.run")
@@ -1010,6 +1016,7 @@ def local_run(
                 build_res.error_msg,
                 build_res.time_cost,
                 time.time(),
+                ""
             )
         else:
             res = call_func_with_timeout(
@@ -1036,6 +1043,7 @@ def local_run(
                     None,
                     build_res.time_cost + timeout,
                     time.time(),
+                    ""
                 )
             elif isinstance(res, Exception):
                 if verbose >= 1:
@@ -1046,6 +1054,7 @@ def local_run(
                     str(res),
                     build_res.time_cost + timeout,
                     time.time(),
+                    ""
                 )
 
         measure_results.append(MeasureResult(*res))

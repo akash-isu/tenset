@@ -108,13 +108,13 @@ if __name__ == "__main__":
             "verbose": 1,
         }
         if task.compute_dag.flop_ct >= 2416443392.0:
-            measurer_kwargs['repeat'] = 4
+            measurer_kwargs['repeat'] = 2
         elif task.compute_dag.flop_ct >= 834928640.0:
-            measurer_kwargs['repeat'] = 6
+            measurer_kwargs['repeat'] = 2
         elif task.compute_dag.flop_ct <= 2097152.0:
-            measurer_kwargs['repeat'] = 10
+            measurer_kwargs['repeat'] = 2
         else:
-            measurer_kwargs['repeat'] = 8
+            measurer_kwargs['repeat'] = 2
 
         # Run measurement
         task_key = (task.workload_key, str(task.target.kind))

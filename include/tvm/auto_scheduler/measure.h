@@ -126,6 +126,8 @@ class BuildResultNode : public Object {
   String error_msg;
   /*! \brief The time cost of build. */
   double time_cost;
+  /*! \brief The python code after applying state. */
+  String py_code;
 
   void VisitAttrs(tvm::AttrVisitor* v) {
     v->Visit("filename", &filename);
@@ -133,6 +135,7 @@ class BuildResultNode : public Object {
     v->Visit("error_no", &error_no);
     v->Visit("error_msg", &error_msg);
     v->Visit("time_cost", &time_cost);
+    v->Visit("py_code", &py_code);
   }
 
   static constexpr const char* _type_key = "auto_scheduler.BuildResult";
@@ -152,9 +155,10 @@ class BuildResult : public ObjectRef {
    * \param error_no The error code.
    * \param error_msg The error message if there is any error.
    * \param time_cost The time cost of build.
+   * \param py_code python code after applying state.
    */
   BuildResult(String filename, Array<te::Tensor> args, int error_no, String error_msg,
-              double time_cost);
+              double time_cost, String py_code);
   TVM_DEFINE_OBJECT_REF_METHODS(BuildResult, ObjectRef, BuildResultNode);
 };
 
@@ -171,6 +175,8 @@ class MeasureResultNode : public Object {
   double all_cost;
   /*! \brief The time stamps of this measurement. */
   double timestamp;
+  /*! \brief The python code after applying state. */
+  String py_code;
 
   void VisitAttrs(tvm::AttrVisitor* v) {
     v->Visit("costs", &costs);
@@ -178,6 +184,7 @@ class MeasureResultNode : public Object {
     v->Visit("error_msg", &error_msg);
     v->Visit("all_cost", &all_cost);
     v->Visit("timestamp", &timestamp);
+    v->Visit("py_code", &py_code);
   }
 
   /*! \brief Do shallow copy. */
@@ -200,9 +207,10 @@ class MeasureResult : public ObjectRef {
    * \param error_msg The error message if there is any error.
    * \param all_cost The time cost of build and run.
    * \param timestamp The time stamps of this measurement.
+   * \param py_code The python code after applying state.
    */
   MeasureResult(Array<PrimExpr> costs, int error_no, String error_msg, double all_cost,
-                double timestamp);
+                double timestamp, String py_code);
 
   TVM_DEFINE_OBJECT_REF_METHODS(MeasureResult, ObjectRef, MeasureResultNode);
 };

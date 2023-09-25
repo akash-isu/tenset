@@ -316,17 +316,19 @@ void WriteMeasureRecords(std::ostream* os, const Array<MeasureInput>& inputs,
                          const Array<MeasureResult>& results, const std::string log_version) {
   dmlc::JSONWriter writer(os);
   for (size_t i = 0; i < inputs.size(); ++i) {
+    const std::string pycode = results[i]->py_code;
     writer.BeginObject(false);
     writer.WriteObjectKeyValue("i", *inputs[i].operator->());
     writer.WriteObjectKeyValue("r", *results[i].operator->());
     writer.WriteObjectKeyValue("v", log_version);
+    writer.WriteObjectKeyValue("py_code", pycode);
     writer.EndObject();
     *os << "\n";
   }
 }
 
 void ReadMeasureRecord(const std::string& str, MeasureInputNode* inp, MeasureResultNode* res,
-                       std::string* log_version) {
+                       std::string* log_version, std::string* py_code) {
   std::istringstream ss(str);
   dmlc::JSONReader reader(&ss);
   std::string key;
@@ -339,6 +341,8 @@ void ReadMeasureRecord(const std::string& str, MeasureInputNode* inp, MeasureRes
       reader.Read(res);
     } else if (key == "v") {
       reader.Read(log_version);
+    } else if (key == "py_code") {
+      reader.Read(py_code);
     } else {
       LOG(FATAL) << "Invalid key in json log: " << key;
     }
@@ -362,13 +366,14 @@ RecordReaderNode::~RecordReaderNode() { infile.close(); }
 
 bool RecordReaderNode::ReadNext(MeasureInputNode* inp, MeasureResultNode* res) {
   std::string log_version;
+  std::string py_code;
 
   while (std::getline(infile, cur_line_)) {
     if (cur_line_[0] == '#' || cur_line_[0] == ' ') {
       // skip comment lines begin with '#' or ' '
       continue;
     }
-    ReadMeasureRecord(cur_line_, inp, res, &log_version);
+    ReadMeasureRecord(cur_line_, inp, res, &log_version, &py_code);
     return true;
   }
 
@@ -427,7 +432,8 @@ TVM_REGISTER_GLOBAL("auto_scheduler.ReadMeasureRecord").set_body_typed([](const 
   auto inp = make_object<MeasureInputNode>();
   auto res = make_object<MeasureResultNode>();
   std::string log_version;
-  ReadMeasureRecord(str, inp.get(), res.get(), &log_version);
+  std::string py_code;
+  ReadMeasureRecord(str, inp.get(), res.get(), &log_version, &py_code);
   return Array<ObjectRef>{ObjectRef(inp), ObjectRef(res)};
 });
 

@@ -76,24 +76,26 @@ MeasureInput MeasureInputNode::copy() const {
 }
 
 BuildResult::BuildResult(String filename, Array<te::Tensor> args, int error_no, String error_msg,
-                         double time_cost) {
+                         double time_cost, String py_code="") {
   auto node = make_object<BuildResultNode>();
   node->filename = std::move(filename);
   node->args = std::move(args);
   node->error_no = error_no;
   node->error_msg = std::move(error_msg);
   node->time_cost = time_cost;
+  node->py_code = std::move(py_code);
   data_ = std::move(node);
 }
 
 MeasureResult::MeasureResult(Array<PrimExpr> costs, int error_no, String error_msg, double all_cost,
-                             double timestamp) {
+                             double timestamp, String py_code="") {
   auto node = make_object<MeasureResultNode>();
   node->costs = std::move(costs);
   node->error_no = error_no;
   node->error_msg = std::move(error_msg);
   node->all_cost = all_cost;
   node->timestamp = timestamp;
+  node->py_code = std::move(py_code);
   data_ = std::move(node);
 }
 
@@ -410,14 +412,14 @@ TVM_REGISTER_GLOBAL("auto_scheduler.MeasureInput").set_body_typed([](SearchTask 
 
 TVM_REGISTER_GLOBAL("auto_scheduler.BuildResult")
     .set_body_typed([](String filename, Array<te::Tensor> args, int error_no, String error_msg,
-                       double time_cost) {
-      return BuildResult(filename, args, error_no, error_msg, time_cost);
+                       double time_cost, String py_code="") {
+      return BuildResult(filename, args, error_no, error_msg, time_cost, py_code);
     });
 
 TVM_REGISTER_GLOBAL("auto_scheduler.MeasureResult")
     .set_body_typed([](Array<PrimExpr> costs, int error_no, String error_msg, double all_cost,
-                       double timestamp) {
-      return MeasureResult(costs, error_no, error_msg, all_cost, timestamp);
+                       double timestamp, String py_code="") {
+      return MeasureResult(costs, error_no, error_msg, all_cost, timestamp, py_code);
     });
 
 TVM_REGISTER_GLOBAL("auto_scheduler.PythonBasedMeasureCallback")

@@ -64,7 +64,7 @@ def dump_program(task, size, max_retry_iter=10):
     measure_results = []
     for state in all_state_list:
         measure_inputs.append(auto_scheduler.MeasureInput(task, state))
-        measure_results.append(auto_scheduler.MeasureResult([0.0], 0, "", 0, time.time()))
+        measure_results.append(auto_scheduler.MeasureResult([0.0], 0, "", 0, time.time(),""))
 
     # Dump to file
     auto_scheduler.save_records(filename, measure_inputs, measure_results)

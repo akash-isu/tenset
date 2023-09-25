@@ -132,7 +132,7 @@ void WriteMeasureRecords(std::ostream* os, const Array<MeasureInput>& inputs,
  * \param log_version A pointer to a string used to store the log version.
  */
 void ReadMeasureRecord(const std::string& str, MeasureInputNode* inp, MeasureResultNode* res,
-                       std::string* log_version);
+                       std::string* log_version, std::string* py_code);
 
 }  // namespace auto_scheduler
 }  // namespace tvm
