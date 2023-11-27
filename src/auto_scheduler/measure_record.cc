@@ -338,11 +338,11 @@ void ReadMeasureRecord(const std::string& str, MeasureInputNode* inp, MeasureRes
     if (key == "i") {
       reader.Read(inp);
     } else if (key == "r") {
-      reader.Read(res);
+            reader.Read(res);
     } else if (key == "v") {
       reader.Read(log_version);
     } else if (key == "py_code") {
-      reader.Read(py_code);
+            reader.Read(py_code);
     } else {
       LOG(FATAL) << "Invalid key in json log: " << key;
     }
@@ -359,8 +359,13 @@ RecordReader::RecordReader(String filename) {
   auto node = make_object<RecordReaderNode>();
   node->filename = filename;
   node->infile.open(filename, std::ifstream::in);
+  // char temp = node->infile.get();
+  // while (node->infile.good()) {
+  //   std::cout << temp;
+  //   temp = node->infile.get();
+  // }
   data_ = std::move(node);
-}
+  }
 
 RecordReaderNode::~RecordReaderNode() { infile.close(); }
 
@@ -373,8 +378,8 @@ bool RecordReaderNode::ReadNext(MeasureInputNode* inp, MeasureResultNode* res) {
       // skip comment lines begin with '#' or ' '
       continue;
     }
-    ReadMeasureRecord(cur_line_, inp, res, &log_version, &py_code);
-    return true;
+        ReadMeasureRecord(cur_line_, inp, res, &log_version, &py_code);
+        return true;
   }
 
   return false;
@@ -421,7 +426,7 @@ TVM_REGISTER_GLOBAL("auto_scheduler.RecordReaderReadLines")
 TVM_REGISTER_GLOBAL("auto_scheduler.RecordReaderReadNext").set_body_typed([](RecordReader reader) {
   auto inp = make_object<MeasureInputNode>();
   auto res = make_object<MeasureResultNode>();
-  if (reader->ReadNext(inp.get(), res.get())) {
+    if (reader->ReadNext(inp.get(), res.get())) {
     return Array<ObjectRef>{ObjectRef(inp), ObjectRef(res)};
   } else {
     return Array<ObjectRef>();

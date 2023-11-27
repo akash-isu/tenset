@@ -3,12 +3,14 @@ from collections import namedtuple, OrderedDict, defaultdict
 import os
 import pickle
 from typing import List, Tuple
-
+import ast
+import subprocess
 import numpy as np
 
 from .measure_record import RecordReader
 from .measure import MeasureInput, MeasureResult
 from .feature import get_per_store_features_from_measure_pairs
+from .ast_parser import generate_python_ast
 
 LearningTask = namedtuple("LearningTask", ['workload_key', 'target'])
 
@@ -28,12 +30,15 @@ class Dataset:
         self.throughputs = OrderedDict()   # Dict[LearningTask -> normalized_throughputs]
         self.min_latency = {}              # Dict[LearningTask -> min latency]
         self.measure_records = {}          # Dict[LearningTask -> Tuple[List[MeasureInput], List[MeasureResult]]
+        self.py_codes = OrderedDict()      # Dict[LearningTask -> feature]
 
     @staticmethod
-    def create_one_task(task, features, throughputs, min_latency=None):
+    def create_one_task(task, features, throughputs, py_codes="", min_latency=None):
         """Create a new dataset with one task and its feature and throughput data"""
         ret = Dataset()
-        ret.load_task_data(task, features, throughputs, min_latency)
+        # ret.load_task_data(task, features, throughputs, min_latency)
+        ret.load_task_data(task, features, throughputs, py_codes=py_codes, min_latency=min_latency)
+        
         return ret
 
     def update_from_measure_pairs(self, inputs: List[MeasureInput], results: List[MeasureResult]):
@@ -48,13 +53,17 @@ class Dataset:
             store_tuple[1].append(res)
 
         for task, (inputs, results) in new_data.items():
-            features, normalized_throughputs, task_ids, min_latency =\
-                get_per_store_features_from_measure_pairs(inputs, results)
+            # features, normalized_throughputs, task_ids, min_latency =\
+            #     get_per_store_features_from_measure_pairs(inputs, results)
+            measure_res, py_codes =\
+                    get_per_store_features_from_measure_pairs(inputs, results, only_code_features=True)
+            features, normalized_throughputs, task_ids, min_latency = measure_res
 
             assert not np.any(task_ids)   # all task ids should be zero
             assert len(min_latency) == 1  # should have only one task
 
-            self.load_task_data(task, features, normalized_throughputs, min_latency[0])
+            # self.load_task_data(task, features, normalized_throughputs, min_latency[0])
+            self.load_task_data(task, features, normalized_throughputs, py_codes=py_codes, min_latency=min_latency[0])
 
     def update_from_dataset(self, dataset):
         for task in dataset.features:
@@ -62,13 +71,15 @@ class Dataset:
                 self.features[task] = dataset.features[task]
                 self.throughputs[task] = dataset.throughputs[task]
                 self.min_latency[task] = dataset.min_latency[task]
+                self.py_codes[task] = dataset.py_codes[task]
 
-    def load_task_data(self, task: LearningTask, features, throughputs, min_latency=None):
+    def load_task_data(self, task: LearningTask, features, throughputs, py_codes="", min_latency=None):
         """Load feature and throughputs for one task"""
         if task not in self.features:
             self.features[task] = features
             self.throughputs[task] = throughputs
             self.min_latency[task] = min_latency
+            self.py_codes[task] = py_codes
         else:
             try:
                 self.features[task] = np.concatenate([self.features[task], features])
@@ -83,6 +94,7 @@ class Dataset:
                 self.throughputs[task] * (combined_min_latency / self.min_latency[task]),
                 throughputs * (combined_min_latency / min_latency)])
             self.min_latency[task] = combined_min_latency
+            self.py_codes[task] = py_codes
 
     def random_split_within_task(self,
                                  train_set_ratio: float=None,
@@ -97,7 +109,7 @@ class Dataset:
         assert train_set_ratio is not None or train_set_num is not None
 
         for task in self.features:
-            features, throughputs = self.features[task], self.throughputs[task]
+            features, py_codes, throughputs = self.features[task], self.py_codes[task], self.throughputs[task]
             if train_set_num is None:
                 split = int(train_set_ratio * len(features))
             else:
@@ -114,12 +126,15 @@ class Dataset:
             if len(train_indices):
                 train_throughputs = throughputs[train_indices]
                 train_min_latency = self.min_latency[task] / np.max(train_throughputs)
-                train_set.load_task_data(task, features[train_indices], train_throughputs, train_min_latency)
+                # train_set.load_task_data(task, features[train_indices], train_throughputs, train_min_latency)
+                
+                train_set.load_task_data(task, features[train_indices], train_throughputs, py_codes=py_codes[train_indices], min_latency=train_min_latency)
 
             if len(test_indices):
                 test_throughputs = throughputs[test_indices]
                 test_min_latency = self.min_latency[task] / np.max(test_throughputs)
-                test_set.load_task_data(task, features[test_indices], test_throughputs, test_min_latency)
+                test_set.load_task_data(task, features[test_indices], test_throughputs, py_codes=py_codes[test_indices], min_latency=test_min_latency)
+                # test_set.load_task_data(task, features[test_indices], test_throughputs, test_min_latency)
 
         return train_set, test_set
 
@@ -136,12 +151,13 @@ class Dataset:
         test_set = Dataset()
         ct = 0
         for task in tasks:
-            features, throughputs = self.features[task], self.throughputs[task]
+            features, py_codes, throughputs = self.features[task], self.py_codes[task], self.throughputs[task]
             ct += len(features)
             if ct <= train_records:
-                train_set.load_task_data(task, features, throughputs, self.min_latency[task])
+                # train_set.load_task_data(task, features, throughputs, self.min_latency[task])
+                train_set.load_task_data(task, features, throughputs, py_codes=py_codes, min_latency=self.min_latency[task])
             else:
-                test_set.load_task_data(task, features, throughputs, self.min_latency[task])
+                test_set.load_task_data(task, features, throughputs, py_codes=py_codes, min_latency=self.min_latency[task])
 
         return train_set, test_set
 
@@ -164,12 +180,14 @@ class Dataset:
         for target in targets:
             tmp_adder = 0
             for task in target_to_task[target]:
-                features, normalized_throughputs = self.features[task], self.throughputs[task]
+                features, py_codes, normalized_throughputs = self.features[task], self.py_codes[task], self.throughputs[task]
                 tmp_adder += len(features)
                 if ct <= train_records:
-                    train_set.load_task_data(task, features, normalized_throughputs)
+                    # train_set.load_task_data(task, features, normalized_throughputs)
+                    train_set.load_task_data(task, features, normalized_throughputs, py_codes=py_codes)
                 else:
-                    test_set.load_task_data(task, features, normalized_throughputs)
+                    # test_set.load_task_data(task, features, normalized_throughputs)
+                    test_set.load_task_data(task, features, normalized_throughputs, py_codes=py_codes)
             ct += tmp_adder
 
         return train_set, test_set
@@ -194,14 +212,15 @@ class Dataset:
         for task in tasks:
             if not (task in self.features):
                 continue
-            ret.load_task_data(task, self.features[task], self.throughputs[task], self.min_latency[task])
+            # ret.load_task_data(task, self.features[task], self.throughputs[task], self.min_latency[task])
+            ret.load_task_data(task, self.features[task], self.throughputs[task], py_codes=self.py_codes[task], min_latency=self.min_latency[task])
         return ret
 
     def __getstate__(self):
-        return self.raw_files, self.features, self.throughputs, self.min_latency, DATASET_FORMAT_VERSION
+        return self.raw_files, self.features, self.throughputs, self.py_codes, self.min_latency, DATASET_FORMAT_VERSION
 
     def __setstate__(self, value):
-        self.raw_files, self.features, self.throughputs, self.min_latency, format_version = value
+        self.raw_files, self.features, self.throughputs, self.py_codes, self.min_latency, format_version = value
 
     def __len__(self, ):
         return sum(len(x) for x in self.throughputs.values())
@@ -237,11 +256,14 @@ def make_dataset_from_log_file(log_files, out_file, min_sample_size, verbose=1):
             features = {}
             throughputs = {}
             min_latency = {}
+            py_codes = {}
             for task, (inputs, results) in measure_records.items():
-                features_, normalized_throughputs, task_ids, min_latency_ =\
-                    get_per_store_features_from_measure_pairs(inputs, results)
+                measure_res, py_codes_ =\
+                    get_per_store_features_from_measure_pairs(inputs, results, only_code_features=True)
+                features_, normalized_throughputs, task_ids, min_latency_ = measure_res
 
                 assert not np.any(task_ids)   # all task ids should be zero
+                assert (len(features_) == len(py_codes_))
                 if len(min_latency_) == 0:
                     # no valid records
                     continue
@@ -252,10 +274,38 @@ def make_dataset_from_log_file(log_files, out_file, min_sample_size, verbose=1):
                 features[task] = features_
                 throughputs[task] = normalized_throughputs
                 min_latency[task] = min_latency_[0]
-            pickle.dump((features, throughputs, min_latency), open(cache_file, "wb"))
+                py_codes[task] = py_codes_
+                # asts_ = []
+                # for code in py_codes_[:-1]:
+                #     try:
+                #         temp_ast = ast.parse(code)
+                #         asts_.append(temp_ast)
+                #         # print(temp_ast)
+                #     except Exception as error:
+                #         # asts_.append("")
+                #         try:
+                #             # reindent_cmd = "python3 reindent.py " + code
+                #             print("inside try")
+                #             result = subprocess.check_output(['python3', 'reindent.py',code])
+                #             output = result.decode('utf-8')
+                #             temp_ast = ast.parse(output)
+                #             print(temp_ast)
+                #             quit()
+                #             # output = result.stdout.decode('utf-8')
+                #             # print(output)
+                            
+                #         except Exception as e:
+                #             print("Another exception occured:", e)
+                        
+                #         print("An exception occured: ", error)
+
+
+                # asts[task] = np.array(asts_)
+                # quit()
+            pickle.dump((features, throughputs, min_latency, py_codes), open(cache_file, "wb"))
 
         for task in features:
-            dataset.load_task_data(task, features[task], throughputs[task], min_latency[task])
+            dataset.load_task_data(task, features[task], throughputs[task], py_codes=py_codes[task], min_latency=min_latency[task])
 
     # Delete task with too few samples
     to_delete = []
@@ -270,6 +320,7 @@ def make_dataset_from_log_file(log_files, out_file, min_sample_size, verbose=1):
         del dataset.features[task]
         del dataset.throughputs[task]
         del dataset.min_latency[task]
+        del dataset.py_codes[task]
 
     # Save to disk
     pickle.dump(dataset, open(out_file, "wb"))

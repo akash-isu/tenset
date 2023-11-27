@@ -22,6 +22,8 @@
  * \brief Feature extraction for the cost model
  */
 
+#include <iostream>
+#include <sys/stat.h>
 #include <tvm/arith/analyzer.h>
 #include <tvm/auto_scheduler/feature.h>
 #include <tvm/auto_scheduler/measure.h>
@@ -43,6 +45,7 @@
 
 #include "search_policy/utils.h"
 #include "utils.h"
+#include <fstream>
 
 namespace tvm {
 // import the function from driver_api.cc
@@ -1367,6 +1370,93 @@ void GetPerStoreFeaturesWorkerFunc(const SearchTask& task, const State& state, i
   }
 }
 
+void GetPerStoreCodeFeaturesWorkerFunc(const SearchTask& task, const State& state, int max_n_bufs,
+                                   std::vector<float>* feature, String& py_codes, std::atomic<int>* error_ct) { //std::vector<float>* feature, std::map<int, String> py_codes, std::atomic<int>* error_ct) {
+  te::Schedule sch;
+  Array<te::Tensor> tensors;
+
+  // NOTE: Currently, feature extraction with and without layout rewrite
+  // returns the same feature vector, so we do not turn on layout rewrite here.
+  // In the future, we can improve the feature extraction to reflect this difference.
+  std::tie(sch, tensors) = task->compute_dag.ApplySteps(state->transform_steps);
+  sch = sch.normalize_for_feature_extraction();
+  auto bounds = te::InferBound(sch);
+  py_codes = task->compute_dag.PrintStepsAsPython(state->transform_steps);
+  if (py_codes.empty()){
+    std::cout << "checking for empty py code " << task->workload_key;
+    std::exit(1);
+  }
+  // std::cout << "code features " << code_feature << "\n";
+
+  try {
+    auto stmt = te::ScheduleOps(sch, bounds, false);
+    Map<te::Tensor, te::Buffer> out_binds;
+    Array<ObjectRef> out_arg_list;
+    bool compact = te::VerifyCompactBuffer(stmt);
+    const std::string& name = "main";
+    GlobalVar global_var(name);
+
+    // Copied from driver_api.cc::lower
+    auto pass_ctx = tvm::transform::PassContext::Current();
+    GetBinds(tensors, compact, std::unordered_map<te::Tensor, te::Buffer>(), &out_binds,
+             &out_arg_list);
+    tir::PrimFunc f = te::SchedulePostProcToPrimFunc(out_arg_list, std::move(stmt), out_binds);
+    f = WithAttr(std::move(f), "global_symbol", runtime::String(name));
+
+    bool noalias = pass_ctx->GetConfig<Bool>("tir.noalias", Bool(true)).value();
+    bool disable_vectorize =
+        pass_ctx->GetConfig<Bool>("tir.disable_vectorize", Bool(false)).value();
+    bool instrument_bound_checkers =
+        pass_ctx->GetConfig<Bool>("tir.instrument_bound_checkers", Bool(false)).value();
+
+    if (noalias) {
+      f = WithAttr(std::move(f), "tir.noalias", Bool(true));
+    }
+    auto mod = IRModule(Map<GlobalVar, BaseFunc>({{global_var, f}}));
+
+    if (IsGPUTask(task)) {
+      auto pass_list = Array<tvm::transform::Pass>();
+      // Phase 0
+      pass_list.push_back(tir::transform::InjectPrefetch());
+      pass_list.push_back(tir::transform::StorageFlatten(64, instrument_bound_checkers));
+      // Phase 1
+      pass_list.push_back(tir::transform::NarrowDataType(32));
+      pass_list.push_back(tir::transform::Simplify());
+      pass_list.push_back(tir::transform::VectorizeLoop(!disable_vectorize));
+      pass_list.push_back(tir::transform::InjectVirtualThread());
+      pass_list.push_back(tir::transform::StorageRewrite());
+      pass_list.push_back(tir::transform::Simplify());
+      tvm::Map<String, tvm::PrimExpr> gpu_params{
+          {"max_shared_memory_per_block", task->hardware_params->max_shared_memory_per_block},
+          {"max_local_memory_per_block", task->hardware_params->max_local_memory_per_block},
+          {"max_threads_per_block", task->hardware_params->max_threads_per_block},
+          {"max_vector_bytes", task->hardware_params->vector_unit_bytes},
+          {"max_vthread", task->hardware_params->max_vthread_extent},
+      };
+      pass_list.push_back(tir::transform::VerifyGPUCode(gpu_params));
+      const auto& optimize = tir::transform::Sequential(pass_list);
+      optimize(mod);
+    }
+    const auto& optimize =
+        tir::transform::Sequential(Array<tvm::transform::Pass>{tir::transform::Simplify()});
+    mod = optimize(std::move(mod));
+    const auto& it = mod->functions.find(global_var);
+    ICHECK(it != mod->functions.end());
+    const auto& prim_func = (*it).second.as<PrimFuncNode>();
+    // std::cout << "Python Code " << task->compute_dag.PrintStepsAsPython(state->transform_steps) << "\n";
+    
+    // String temp = task->compute_dag.PrintStepsAsPython(state->transform_steps);
+    // std::cout << "cholche? " << "\n";
+    // code_feature = std::string{task->compute_dag.PrintStepsAsPython(state->transform_steps)};
+    // code_feature = task->compute_dag.PrintStepsAsPython(state->transform_steps);
+    // std::cout << "cholche? \n" << code_feature << "\n";
+    GetPerStoreFeature(prim_func->body, task->hardware_params->cache_line_bytes, max_n_bufs,
+                       feature);
+  } catch (Error& e) {
+    (*error_ct)++;
+  }
+}
+
 void GetPerStoreFeaturesFromStates(const Array<State>& states, const SearchTask& task,
                                    int skip_first_n_feature_extraction, int max_n_bufs,
                                    std::vector<std::vector<float>>* features) {
@@ -1379,6 +1469,35 @@ void GetPerStoreFeaturesFromStates(const Array<State>& states, const SearchTask&
                         [&task, &states, &max_n_bufs, &features, &error_ct](int i) {
                           GetPerStoreFeaturesWorkerFunc(task, states[i], max_n_bufs,
                                                         &(*features)[i], &error_ct);
+                        });
+}
+
+void GetPerStoreFeaturesFromStates(const Array<State>& states, const std::vector<SearchTask>& tasks,
+                                   int skip_first_n_feature_extraction, int max_n_bufs,
+                                   std::vector<std::vector<float>>* features, std::map<int, String>& py_codes) { //std::vector<std::vector<float>>* features, std::vector<String>* code_features
+  // extract features
+  features->assign(states.size(), std::vector<float>());
+  // code_features->assign(states.size(), String());
+
+  std::atomic<int> error_ct(0);
+  // std::cout << "GetPerStoreFeaturesFromStates \n";
+
+  // for (int i = skip_first_n_feature_extraction; i < states.size(); i++){
+  //   GetPerStoreCodeFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs, &(*features)[i], code_features[i], &error_ct);  
+  //   // std::cout << "inside loop\n";
+  //   // std::cout << tasks[i] << "\n";
+  //   // std::cout << states[i] << "\n";
+
+  // }
+  std::cout << "Task size " << tasks[5] << "\n";
+  std::cout << "States size " << states[5] << "\n";
+
+  support::parallel_for(skip_first_n_feature_extraction, states.size(),
+                        [&tasks, &states, &max_n_bufs, &features, &py_codes, &error_ct](int i) {
+                          // py_codes[i] = tasks[i]->compute_dag.PrintStepsAsPython(states[i]->transform_steps);
+                          // std::cout << tasks[i]->compute_dag.PrintStepsAsPython(states[i]->transform_steps);
+                          GetPerStoreCodeFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs,
+                                                        &(*features)[i], py_codes[i], &error_ct);
                         });
 }
 
@@ -1467,14 +1586,16 @@ void GetPerStoreFeaturesFromMeasurePairs(const Array<MeasureInput>& inputs,
                                          std::vector<std::vector<float>>* features,
                                          std::vector<float>* normalized_throughputs,
                                          std::vector<int>* task_ids,
-                                         std::vector<float>* min_costs) {
+                                         std::vector<float>* min_costs,
+                                         std::map<int, String>& py_codes) { //std::vector<String> *code_features
   Array<State> states;
   std::vector<SearchTask> tasks;
 
   normalized_throughputs->clear();
   task_ids->clear();
   min_costs->clear();
-
+  // code_features->clear();
+  
   // (workload_key, target) -> (search_task, task_id)
   std::unordered_map<std::pair<std::string, std::string>, std::pair<SearchTask, size_t>> task_cache;
 
@@ -1483,13 +1604,14 @@ void GetPerStoreFeaturesFromMeasurePairs(const Array<MeasureInput>& inputs,
   ICHECK(workload_key_to_tensors != nullptr);
 
   tasks.reserve(inputs.size());
+  // code_features->reserve(inputs.size());
   normalized_throughputs->reserve(inputs.size());
   task_ids->reserve(inputs.size());
   for (size_t i = 0; i < inputs.size(); ++i) {
     float cost = static_cast<float>(FloatArrayMean(results[i]->costs));
     const std::string& workload_key = inputs[i]->task->workload_key;
     SearchTask task;
-
+    
     size_t task_id;
     std::pair<std::string, std::string> key(workload_key, inputs[i]->task->target->str());
     auto find_res = task_cache.find(key);
@@ -1530,8 +1652,16 @@ void GetPerStoreFeaturesFromMeasurePairs(const Array<MeasureInput>& inputs,
     (*normalized_throughputs)[i] = (*min_costs)[(*task_ids)[i]] / (*normalized_throughputs)[i];
   }
 
+  // for (auto i: min_costs){
+  //   std::cout << i << "\n";
+  // }
+  // std::cout << "Task " << tasks[0]->compute_dag << "\n" << states[0]->transform_steps << "\n";
+  // std::cout << "Python Code " << tasks[0]->compute_dag.PrintStepsAsPython(states[0]->transform_steps) << "\n";
+  // GetPerStoreFeaturesFromStates(states, tasks, skip_first_n_feature_extraction, max_n_bufs,
+  //                               features);
+  
   GetPerStoreFeaturesFromStates(states, tasks, skip_first_n_feature_extraction, max_n_bufs,
-                                features);
+                                features, py_codes);
 }
 
 /*
@@ -1621,6 +1751,77 @@ TVMByteArray SerializeFeatures(std::vector<std::vector<float>>&& features,
   return TVMByteArray{out_data->data(), total_bytes};
 }
 
+TVMByteArray SerializeCodeFeatures(std::vector<std::vector<float>>&& features,
+                               std::vector<float>&& normalized_throughputs,
+                               std::vector<int>&& task_ids,
+                               std::vector<float>&& min_costs,
+                               std::vector<String>&& code_features,
+                               std::vector<char>* out_data) {
+  size_t total_bytes = 0;
+  std::vector<int> size_vector;
+  // std::cout << "Size of hagu " << task_ids.at(23) << " " << task_ids.at(69) << "\n";
+
+  int n = features.size();
+
+  // serialize sizes
+  // size_t size_vector_size = 1 + n + 3;
+  size_t size_vector_size = 1 + n + 4;
+  total_bytes += size_vector_size * sizeof(int);
+
+  size_vector.reserve(size_vector_size);
+  size_vector.push_back(features.size());
+  for (const auto& x : features) {
+    size_vector.push_back(static_cast<int>(x.size()));
+    total_bytes += sizeof(float) * x.size();
+  }
+  size_vector.push_back(static_cast<int>(normalized_throughputs.size()));
+  total_bytes += sizeof(float) * normalized_throughputs.size();
+  size_vector.push_back(static_cast<int>(task_ids.size()));
+  total_bytes += sizeof(int) * task_ids.size();
+  size_vector.push_back(static_cast<int>(min_costs.size()));
+  total_bytes += sizeof(float) * min_costs.size();
+  size_vector.push_back(static_cast<int>(code_features.size()));
+  total_bytes += sizeof(String) * code_features.size();
+  // std::cout << "size vector size " << size_vector.size() << " " << size_vector_size << "\n";
+
+  CHECK_EQ(size_vector.size(), size_vector_size);
+
+  // allocate memory
+  out_data->reserve(total_bytes);
+  char* ptr = out_data->data();
+
+  // serialize size_vector
+  memmove(ptr, reinterpret_cast<char*>(size_vector.data()), size_vector.size() * sizeof(int));
+  ptr += size_vector.size() * sizeof(int);
+
+  // serialize features
+  for (auto& x : features) {
+    memmove(ptr, x.data(), sizeof(float) * x.size());
+    ptr += sizeof(float) * x.size();
+    x.clear();
+  }
+
+  // serialize normalized_throughputs
+  memmove(ptr, reinterpret_cast<char*>(normalized_throughputs.data()),
+          normalized_throughputs.size() * sizeof(int));
+  ptr += normalized_throughputs.size() * sizeof(int);
+
+  // serialize task_ids
+  memmove(ptr, reinterpret_cast<char*>(task_ids.data()), task_ids.size() * sizeof(int));
+  ptr += task_ids.size() * sizeof(int);
+
+  // serialize min_costs
+  memmove(ptr, reinterpret_cast<char*>(min_costs.data()), min_costs.size() * sizeof(float));
+  ptr += min_costs.size() * sizeof(float);
+
+  memmove(ptr, reinterpret_cast<char*>(code_features.data()), code_features.size() * sizeof(String));
+  ptr += code_features.size() * sizeof(String);
+
+  CHECK_EQ(ptr - out_data->data(), total_bytes);
+  std::cout << "out data " << out_data->data() << "\n";
+  return TVMByteArray{out_data->data(), total_bytes};
+}
+
 TVM_REGISTER_GLOBAL("auto_scheduler.GetPerStoreFeaturesFromFile")
     .set_body([](TVMArgs args, TVMRetValue* ret) {
       std::string filename = args[0];
@@ -1646,15 +1847,54 @@ TVM_REGISTER_GLOBAL("auto_scheduler.GetPerStoreFeaturesFromMeasurePairs")
       Array<MeasureResult> results = args[1];
       int skip_first_n_feature_extraction = args[2];
       int max_n_bufs = args[3];
+      bool only_code_features = args[4];
 
       std::vector<std::vector<float>> features;
       std::vector<float> normalized_throughputs;
       std::vector<int> task_ids;
       std::vector<float> min_costs;
 
+      std::vector<String> code_features;
+      std::map<int, String> py_codes;
+
+      // if (only_code_features)
+
       GetPerStoreFeaturesFromMeasurePairs(inputs, results, skip_first_n_feature_extraction,
                                           max_n_bufs, &features, &normalized_throughputs,
-                                          &task_ids, &min_costs);
+                                          &task_ids, &min_costs, py_codes);
+      // GetPerStoreFeaturesFromMeasurePairs(inputs, results, skip_first_n_feature_extraction,
+      //                                     max_n_bufs, &features, &normalized_throughputs,
+      //                                     &task_ids, &min_costs);
+      // std::cout << "Python Code " << code_features[0] << "\n";
+      // std::cout << "Python Code " << code_features[1] << "\n";
+      
+      // std::cout << "Task_ids " << task_ids[0] <<"\n" << task_ids[1024] << "\n";
+      std::cout <<"Feature size " << features.size() <<"py code size " << py_codes.size() <<"\n";
+      if (mkdir("py_code_dir", 0777) == -1)
+        std::cerr << "Error :  " << strerror(errno) << "\n";
+      else
+        std::cout << "Directory created \n";
+      std::string start = "py_code_dir/data_";
+      std::string ext = ".txt";
+
+      if (features.size() != py_codes.size()){
+        std::cout <<"Feature size " << features.size() <<"py code size " << py_codes.size() <<"\n";  
+        // return(0);
+        std::exit(1);
+      }
+      for(const auto& pair : py_codes) {
+        std::string file_name = start + std::to_string(pair.first) + ext;
+        std::ofstream outputFile(file_name);
+        // std::cout << "pair first " << pair.first << " " << file_name <<"\n";
+        // std::cout << "pair second " << pair.second <<"\n";
+        // outputFile << pair.first << ': ' << pair.second << '\n NXT \n';
+        outputFile << pair.second;
+        outputFile.close();
+      }
+      std::cout <<"Feature size " << features.size() << "\n";
+      // std::ofstream binaryOutput("data.bin", std::ios::binary);
+      // binaryOutput.write(reinterpret_cast<const char*>(&py_codes), sizeof(py_codes));
+      // binaryOutput.close();
 
       std::vector<char> byte_data;
       *ret = SerializeFeatures(std::move(features), std::move(normalized_throughputs),

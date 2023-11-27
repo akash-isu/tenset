@@ -1229,6 +1229,8 @@ String ComputeDAG::PrintStepsAsPython(const Array<Step>& transform_steps) const 
           ss << ", ";
         }
       }
+      if (ss.rdbuf()->in_avail()==0)
+        std::cout << "length of ss " << ss.rdbuf()->in_avail() << "\n";
       ss << " = "
          << "tuple(" << op_name << ".op.axis)"
          << " + "

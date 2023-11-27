@@ -4,9 +4,11 @@ import argparse
 import logging
 import pickle
 import random
-
+import os
+import ast
 import torch
 import numpy as np
+import subprocess
 
 import tvm
 from tvm.auto_scheduler.utils import to_str_round
@@ -28,6 +30,12 @@ from tvm.auto_scheduler.cost_model.metric import (
     metric_mape,
     random_mix,
 )
+from ast_parser import convert_python_to_ast, graph_from_tree_sitter
+from pathlib import Path
+import transformers, datasets
+from tokenizers import BertWordPieceTokenizer
+from transformers import BertTokenizer
+# from torch.util.data import Dataset, DataLoader
 
 
 def evaluate_model(model, test_set):
@@ -94,6 +102,7 @@ def make_model(name, use_gpu=False):
 
 def train_zero_shot(dataset, train_ratio, model_names, split_scheme, use_gpu):
     # Split dataset
+    # print(dataset.py_codes)
     if split_scheme == "within_task":
         train_set, test_set = dataset.random_split_within_task(train_ratio)
     elif split_scheme == "by_task":
@@ -104,6 +113,7 @@ def train_zero_shot(dataset, train_ratio, model_names, split_scheme, use_gpu):
         raise ValueError("Invalid split scheme: " + split_scheme)
 
     print("Train set: %d. Task 0 = %s" % (len(train_set), train_set.tasks()[0]))
+    # quit()
     if len(test_set) == 0:
         test_set = train_set
     print("Test set:  %d. Task 0 = %s" % (len(test_set), test_set.tasks()[0]))
@@ -114,6 +124,7 @@ def train_zero_shot(dataset, train_ratio, model_names, split_scheme, use_gpu):
     for name in names:
         models.append(make_model(name, use_gpu))
 
+    print("Model", models)
     eval_results = []
     for name, model in zip(names, models):
         # Train the model
@@ -134,6 +145,116 @@ def train_zero_shot(dataset, train_ratio, model_names, split_scheme, use_gpu):
         for key, val in eval_results[i].items():
             print("%s: %.4f" % (key, val))
 
+def train_BERT_tokenizer(paths):
+    tokenizer = BertWordPieceTokenizer(
+        clean_text=True,
+        handle_chinese_chars=False,
+        strip_accents=False,
+        lowercase=True
+    )
+
+    tokenizer.train(
+        files=paths,
+        vocab_size=30_000,
+        min_frequency=5,
+        limit_alphabet=1000,
+        wordpieces_prefix='##',
+        special_tokens=['[PAD]', '[CLS]', '[SEP]', '[MASK]', '[UNK]']
+    )
+    os.mkdir('./tvm_bert')
+    tokenizer.save_model('./tvm_bert', 'tvm_bert_it')
+
+def setup_AST_graphs(dataset, train_ratio, split_scheme):
+    if split_scheme == "within_task":
+        train_set, test_set = dataset.random_split_within_task(train_ratio)
+    elif split_scheme == "by_task":
+        train_set, test_set = dataset.random_split_by_task(train_ratio)
+    elif split_scheme == "by_target":
+        train_set, test_set = dataset.random_split_by_target(train_ratio)
+    else:
+        raise ValueError("Invalid split scheme: " + split_scheme)
+    
+    if len(test_set) == 0:
+        test_set = train_set
+
+    pickle_dict = {}
+    idx = 0
+    if not os.path.exists(os.path.join(os.getcwd(), "tokenizer_data")):
+        os.mkdir(os.path.join(os.getcwd(), "tokenizer_data"))
+        for task in train_set.features:
+            for pc in train_set.py_codes[task]:
+                fname = "tokenizer_data/file_" + str(idx) + ".txt"
+                f = open(fname, "w")
+                f.write(pc)
+                f.close()
+                print(fname)
+                idx += 1
+    else:
+        from pathlib import Path
+        if not os.path.exists(os.path.join(os.getcwd(), "tvm_bert")):
+            paths = [str(x) for x in Path('./tokenizer_data').glob('**/*.txt')]
+            train_BERT_tokenizer(paths)
+        # else:
+        #     tokenizer = BertTokenizer.from_pretrained('./tvm_bert/tvm_bert_it-vocab.txt', local_files_only=True)
+        #     print(tokenizer.encode("hagu kahbi?"))
+    if not os.path.exists(os.path.join(os.getcwd(), "output_dir")):
+        os.mkdir(os.path.join(os.getcwd(), "output_dir"))
+    idx = 0
+    for task in train_set.features:
+        hagu = False
+        code_features = []
+        source_nodes = []
+        sink_nodes = []
+        for pc in train_set.py_codes[task]:
+            code_features_, source_nodes_, sink_nodes_ = graph_from_tree_sitter(pc)
+            code_features.append(code_features_)
+            source_nodes.append(source_nodes_)
+            sink_nodes.append(sink_nodes_)
+
+        op_dict = {}
+        op_dict['features'] = train_set.features[task]
+        op_dict['code_features'] = code_features
+        op_dict['sources'] = source_nodes
+        op_dict['sinks'] = sink_nodes
+        op_dict['throughputs'] = train_set.throughputs[task]
+        op_dict['min_latency'] = train_set.min_latency[task]
+
+        # pickle_dict[task] = op_dict
+        fname = "output_dir/" + str(idx) + ".pkl"
+        pickle.dump(op_dict, open(fname, "wb"))
+        idx += 1
+        # f = open(fname, "w")
+        # f.write(pc)
+        # f.close()
+    
+    out_file = "train_" + split_scheme + ".pkl"
+    pickle.dump(pickle_dict, open(out_file, "wb"))
+
+            # quit()
+            # try:
+            #     graph_from_tree_sitter(pc)
+            #     # index, edge_index, types, features, edge_types, edge_in_out_indexs_s, edge_in_out_indexs_t, edge_in_out_head_tail = convert_python_to_ast(pc)
+            #     # print(edge_in_out_head_tail, len(edge_in_out_head_tail))
+            #     quit()
+            # except:
+            #     print("An error occured")
+                # pc_lines = pc.split("\n")
+                # for line_idx, line in enumerate(pc_lines):
+                #     if line.startswith(" ="):
+                #         pc_lines[line_idx] = "temp" + line
+                # mod_pc = '\n'.join(pc_lines)
+                # index, edge_index, types, features, edge_types, edge_in_out_indexs_s, edge_in_out_indexs_t, edge_in_out_head_tail = convert_python_to_ast(mod_pc)
+                # reindent_cmd = "python3 reindent.py " + pc
+                # # print("inside try")
+                # try:
+                #     result = subprocess.check_output(reindent_cmd, shell=True)
+                # except subprocess.CalledProcessError as e:
+                #     print(e.output)
+                #     print(e.returncode)
+                # output = result.decode('utf-8')
+                # temp_ast = ast.parse(output)
+                # print(temp_ast)
+                # print(err)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -165,9 +286,13 @@ if __name__ == "__main__":
 
     print("Load dataset...")
     dataset = pickle.load(open(args.dataset[0], "rb"))
-    for i in range(1, len(args.dataset)):
-        tmp_dataset = pickle.load(open(args.dataset[i], "rb"))
-        dataset.update_from_dataset(tmp_dataset)
+    # for i in range(1, len(args.dataset)):
+    #     tmp_dataset = pickle.load(open(args.dataset[i], "rb"))
+    #     dataset.update_from_dataset(tmp_dataset)
+
+    if args.models == "gnn":
+        setup_AST_graphs(dataset, args.train_ratio, args.split_scheme)
+    quit()
 
     train_zero_shot(dataset, args.train_ratio, args.models, args.split_scheme, args.use_gpu)
 
