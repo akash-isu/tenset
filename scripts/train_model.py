@@ -205,30 +205,36 @@ def setup_AST_graphs(dataset, train_ratio, split_scheme):
         code_features = []
         source_nodes = []
         sink_nodes = []
-        for pc in train_set.py_codes[task]:
-            code_features_, source_nodes_, sink_nodes_ = graph_from_tree_sitter(pc)
-            code_features.append(code_features_)
-            source_nodes.append(source_nodes_)
-            sink_nodes.append(sink_nodes_)
+        fname = "output_dir/" + str(idx) + ".pkl"
 
-        op_dict = {}
-        op_dict['features'] = train_set.features[task]
-        op_dict['code_features'] = code_features
-        op_dict['sources'] = source_nodes
-        op_dict['sinks'] = sink_nodes
-        op_dict['throughputs'] = train_set.throughputs[task]
-        op_dict['min_latency'] = train_set.min_latency[task]
+        if os.path.exists(fname):
+            print("exists", idx)
+            idx += 1
+        else:
+            for pc in train_set.py_codes[task]:
+                code_features_, source_nodes_, sink_nodes_ = graph_from_tree_sitter(pc)
+                code_features.append(code_features_)
+                source_nodes.append(source_nodes_)
+                sink_nodes.append(sink_nodes_)
+                
+            op_dict = {}
+            # op_dict['features'] = train_set.features[task]
+            op_dict['code_features'] = code_features
+            op_dict['sources'] = source_nodes
+            op_dict['sinks'] = sink_nodes
+            op_dict['throughputs'] = train_set.throughputs[task]
+            op_dict['min_latency'] = train_set.min_latency[task]
 
         # pickle_dict[task] = op_dict
-        fname = "output_dir/" + str(idx) + ".pkl"
-        pickle.dump(op_dict, open(fname, "wb"))
-        idx += 1
+        #fname = "output_dir/" + str(idx) + ".pkl"
+            pickle.dump(op_dict, open(fname, "wb"))
+            idx += 1
         # f = open(fname, "w")
         # f.write(pc)
         # f.close()
     
-    out_file = "train_" + split_scheme + ".pkl"
-    pickle.dump(pickle_dict, open(out_file, "wb"))
+    #out_file = "train_" + split_scheme + ".pkl"
+    #pickle.dump(pickle_dict, open(out_file, "wb"))
 
             # quit()
             # try:

@@ -343,19 +343,23 @@ def get_per_store_features_from_measure_pairs(
         inputs, results, skip_first_n_feature_extraction, max_n_bufs or DEFAULT_MAX_N_BUFS, only_code_features
     )
     
+    some_var = unpack_feature(byte_arr)
+    features_, normalized_throughputs, task_ids, min_latency_ = some_var
+    print("features length", len(features_))
+
     py_codes = []
-    # file_cnt = len(glob.glob1("py_code_dir","*.txt"))
-    # start = "py_code_dir/data_"
-    # ext = ".txt"
-    # for i in range(file_cnt):
-    #     try:
-    #         f = open((start + str(i) + ext), mode="r")
-    #         data = f.read()
-    #         py_codes.append(data)
-    #         f.close()
-    #     except FileNotFoundError as err:
-    #         py_codes.append("")
-    #         print("Error", err)
+    file_cnt = len(glob.glob1("py_code_dir","*.txt"))
+    start = "py_code_dir/data_"
+    ext = ".txt"
+    for i in range(len(features_)):
+        try:
+            f = open((start + str(i) + ext), mode="r")
+            data = f.read()
+            py_codes.append(data)
+            f.close()
+        except FileNotFoundError as err:
+            py_codes.append("")
+            print("Error", err)
     # chunk_size = 10
     # f = open("data.txt", mode="r")
 
@@ -366,13 +370,11 @@ def get_per_store_features_from_measure_pairs(
     #     print(f"Read {len(chunk)} bytes: {chunk}")
     # data = f.read()
     # py_codes = data.split("\n\n")
-    # print("Length ", len(py_codes))
-    # print("Length ", py_codes[-1])
-    some_var = unpack_feature(byte_arr)
-    # features_, normalized_throughputs, task_ids, min_latency_ = some_var
+    print("Length ", len(py_codes))
+    print("Length ", py_codes[-1])
 
     # assert(len(features_) == len(py_codes))
-    # shutil.rmtree("py_code_dir")
+    shutil.rmtree("py_code_dir")
     # print(type(some_var), len(some_var))
     # print(some_var[0].shape, some_var[1].shape, some_var[2].shape, some_var[3].shape)
     # print(max(some_var[1]))
