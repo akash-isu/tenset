@@ -1482,23 +1482,23 @@ void GetPerStoreFeaturesFromStates(const Array<State>& states, const std::vector
   std::atomic<int> error_ct(0);
   // std::cout << "GetPerStoreFeaturesFromStates \n";
 
-  // for (int i = skip_first_n_feature_extraction; i < states.size(); i++){
-  //   GetPerStoreCodeFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs, &(*features)[i], code_features[i], &error_ct);  
-  //   // std::cout << "inside loop\n";
-  //   // std::cout << tasks[i] << "\n";
-  //   // std::cout << states[i] << "\n";
+  for (int i = skip_first_n_feature_extraction; i < states.size(); i++){
+    GetPerStoreCodeFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs, &(*features)[i], py_codes[i], &error_ct);  
+    // std::cout << "inside loop\n";
+    // std::cout << tasks[i] << "\n";
+    // std::cout << states[i] << "\n";
 
-  // }
-  std::cout << "Task size " << tasks[5] << "\n";
-  std::cout << "States size " << states[5] << "\n";
+  }
+  // std::cout << "Task size " << tasks[5] << "\n";
+  // std::cout << "States size " << states[5] << "\n";
 
-  support::parallel_for(skip_first_n_feature_extraction, states.size(),
-                        [&tasks, &states, &max_n_bufs, &features, &py_codes, &error_ct](int i) {
-                          // py_codes[i] = tasks[i]->compute_dag.PrintStepsAsPython(states[i]->transform_steps);
-                          // std::cout << tasks[i]->compute_dag.PrintStepsAsPython(states[i]->transform_steps);
-                          GetPerStoreCodeFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs,
-                                                        &(*features)[i], py_codes[i], &error_ct);
-                        });
+  // support::parallel_for(skip_first_n_feature_extraction, states.size(),
+  //                       [&tasks, &states, &max_n_bufs, &features, &py_codes, &error_ct](int i) {
+  //                         // py_codes[i] = tasks[i]->compute_dag.PrintStepsAsPython(states[i]->transform_steps);
+  //                         // std::cout << tasks[i]->compute_dag.PrintStepsAsPython(states[i]->transform_steps);
+  //                         GetPerStoreCodeFeaturesWorkerFunc(tasks[i], states[i], max_n_bufs,
+  //                                                       &(*features)[i], py_codes[i], &error_ct);
+  //                       });
 }
 
 void GetPerStoreFeaturesFromStates(const Array<State>& states, const std::vector<SearchTask>& tasks,
@@ -1818,7 +1818,7 @@ TVMByteArray SerializeCodeFeatures(std::vector<std::vector<float>>&& features,
   ptr += code_features.size() * sizeof(String);
 
   CHECK_EQ(ptr - out_data->data(), total_bytes);
-  std::cout << "out data " << out_data->data() << "\n";
+  // std::cout << "out data " << out_data->data() << "\n";
   return TVMByteArray{out_data->data(), total_bytes};
 }
 
