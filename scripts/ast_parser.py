@@ -205,9 +205,9 @@ def graph_from_tree_sitter(code):
     source = []
     sink = []
     node_features = []
-    print(tree.root_node.type)
+    # print(tree.root_node.type)
     generate_tree_sitter_edges(tree.root_node, node_features, source, sink)
-    print("done", len(node_features), len(source), len(sink))
+    # print("done", len(node_features), len(source), len(sink))
     return node_features, source, sink
     # for child in tree.root_node.children:
     #     for grandchild in child.children:
