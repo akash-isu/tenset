@@ -1,10 +1,7 @@
 """Dataset management"""
 from collections import namedtuple, OrderedDict, defaultdict
-import os
-import pickle
+import os, random, pickle, ast, subprocess
 from typing import List, Tuple
-import ast
-import subprocess
 import numpy as np
 
 from .measure_record import RecordReader
@@ -271,37 +268,17 @@ def make_dataset_from_log_file(log_files, out_file, min_sample_size, verbose=1):
                     # should have only one task
                     assert len(min_latency_) == 1, f"len = {len(min_latency)} in {filename}"
 
-                features[task] = features_
-                throughputs[task] = normalized_throughputs
+                # print("Print this please")
+                num_measurements = len(features_)
+                indexes_to_keep = list(range(num_measurements))
+                if num_measurements > 200:
+                    indexes_to_keep = random.sample(indexes_to_keep, 200)
+
+                features[task] = features_[indexes_to_keep]
+                throughputs[task] = normalized_throughputs[indexes_to_keep]
                 min_latency[task] = min_latency_[0]
-                py_codes[task] = py_codes_
-                # asts_ = []
-                # for code in py_codes_[:-1]:
-                #     try:
-                #         temp_ast = ast.parse(code)
-                #         asts_.append(temp_ast)
-                #         # print(temp_ast)
-                #     except Exception as error:
-                #         # asts_.append("")
-                #         try:
-                #             # reindent_cmd = "python3 reindent.py " + code
-                #             print("inside try")
-                #             result = subprocess.check_output(['python3', 'reindent.py',code])
-                #             output = result.decode('utf-8')
-                #             temp_ast = ast.parse(output)
-                #             print(temp_ast)
-                #             quit()
-                #             # output = result.stdout.decode('utf-8')
-                #             # print(output)
-                            
-                #         except Exception as e:
-                #             print("Another exception occured:", e)
-                        
-                #         print("An exception occured: ", error)
-
-
-                # asts[task] = np.array(asts_)
-                # quit()
+                py_codes[task] = py_codes_[indexes_to_keep]
+                
             pickle.dump((features, throughputs, min_latency, py_codes), open(cache_file, "wb"))
 
         for task in features:
