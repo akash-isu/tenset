@@ -241,7 +241,7 @@ def make_dataset_from_log_file(log_files, out_file, min_sample_size, verbose=1):
         cache_file = f"{cache_folder}/{filename.replace('/', '_')}.feature_cache"
         if os.path.exists(cache_file):
             # Load feature from the cached file
-            features, throughputs, min_latency = pickle.load(open(cache_file, "rb"))
+            features, throughputs, min_latency, py_codes = pickle.load(open(cache_file, "rb"))
         else:
             # Read measure records
             measure_records = {}
