@@ -25,7 +25,7 @@ import sys, json
 import pydotplus
 import networkx
 from tree_sitter import Language, Parser
-import transformers, datasets
+# import transformers, datasets
 from tokenizers import BertWordPieceTokenizer
 from transformers import BertTokenizer
 
